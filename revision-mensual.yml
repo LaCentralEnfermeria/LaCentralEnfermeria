@@ -1,0 +1,52 @@
+name: Revisión mensual de normas y guías
+
+on:
+  schedule:
+    - cron: '0 14 1 * *'     # día 1 de cada mes, 14:00 UTC (08:00 hora de CDMX)
+  workflow_dispatch:          # permite ejecutarla a mano desde la pestaña Actions
+
+permissions:
+  contents: write             # para guardar el sello de verificación en el HTML
+  issues: write               # para abrir un aviso cuando haya algo que revisar
+
+env:
+  HTML_FILE: index.html       # cambia este nombre si tu archivo se llama distinto
+
+jobs:
+  revisar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Instalar cliente de Claude (solo si configuraste la clave)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -n "$ANTHROPIC_API_KEY" ]; then pip install anthropic; fi
+
+      - name: Revisar normas y guías
+        id: rev
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python scripts/revisar_fuentes.py --html "$HTML_FILE" --informe informe.md
+
+      - name: Guardar el sello de verificación
+        run: |
+          git config user.name  "LACE revisión mensual"
+          git config user.email "actions@users.noreply.github.com"
+          git add "$HTML_FILE"
+          git diff --cached --quiet || git commit -m "Revisión mensual: sello de verificación $(date -u +%Y-%m-%d)"
+          git push
+
+      - name: Abrir aviso si hay algo que revisar
+        if: steps.rev.outputs.hay_cambios == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create \
+            --title "Revisión mensual $(date -u +%Y-%m): hay puntos que revisar" \
+            --body-file informe.md
